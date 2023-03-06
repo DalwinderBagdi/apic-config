@@ -1,0 +1,186 @@
+:source-highlighter: coderay
+
+== Instructions
+
+=== Initial Setup
+. Verify the version of kubernetes is compatible
++
+I am using version v1.24.9 for installing 10.0.1.8
+
++
+Compatibility report can be found - https://www.ibm.com/software/reports/compatibility/clarity/softwareReqsForProduct.html
+
+. Connect to cluster
++
+[,shell]
+----
+export KUBECONFIG="${KUBECONFIG}:aks-1.24-kube.config"
+
+echo $KUBECONFIG
+
+kubectl config use-context itzaks-5500054bqe-hzuh
+
+Switched to context "itzaks-5500054bqe-hzuh".
+----
+
+. Install ingress controller
++
+[,shell]
+----
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.3.0/deploy/static/provider/cloud/deploy.yaml
+----
+
+.. Check the ingress pods are running
++
+[,shell]
+----
+kubectl get pods --namespace ingress-nginx
+----
+
+.. Check the NGINX Ingress controller has been assigned a public Ip address
++
+[,shell]
+----
+kubectl get service ingress-nginx-controller --namespace=ingress-nginx
+----
+
+
+. Checked storage requirements
++
+For this version of DataPower we need block storage with setting WaitForFirstConsumer
++
+[,shell]
+----
+oc get sc
+
+NAME                    PROVISIONER          RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+azurefile               file.csi.azure.com   Delete          Immediate              true                   75m
+azurefile-csi           file.csi.azure.com   Delete          Immediate              true                   75m
+azurefile-csi-premium   file.csi.azure.com   Delete          Immediate              true                   75m
+azurefile-premium       file.csi.azure.com   Delete          Immediate              true                   75m
+default (default)       disk.csi.azure.com   Delete          WaitForFirstConsumer   true                   75m
+managed                 disk.csi.azure.com   Delete          WaitForFirstConsumer   true                   75m
+managed-csi             disk.csi.azure.com   Delete          WaitForFirstConsumer   true                   75m
+managed-csi-premium     disk.csi.azure.com   Delete          WaitForFirstConsumer   true                   75m
+managed-premium         disk.csi.azure.com   Delete          WaitForFirstConsumer   true                   75m
+
+----
++
+I will be using managed-premium
+
+. Create namespaces
++
+[,shell]
+----
+kubectl create namespace apic-operator
+
+kubectl create namespace datapower
+----
+
+. Install Cert-manager
++
+Use of a certificate manager adds convenience to the generation and management of certificate, but is not required.
++
+[,shell]
+----
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.11.0/cert-manager.yaml
+----
+
+=== Certificates and secrets
+. All certificates must be signed by the same CA as the management endpoint
++
+On your OCP cluster:
++
+[,shell]
+----
+oc get secret -n apic apic-ingress-ca -o json | jq 'del(.metadata.creationTimestamp,.metadata.namespace,.metadata.resourceVersion,.metadata.uid,.metadata.selfLink)' > k8s/ingress-secret.json
+----
++
+On your AKS cluster
++
+[,shell]
+----
+kubectl config set-context --current --namespace=datapower
+kubectl apply -f k8s/ingress-ca-secret.json
+----
+
+. We will use this secret in the new issuer and certificate.
++
+[,shell]
+----
+kubectl apply -f k8s/ingress-certificate.yaml
+kubectl apply -f k8s/issuer.yaml
+----
+
+. Check that the certificate and issuer is ready
++
+[,shell]
+----
+
+dallibagdi@Dallis-MacBook-Pro NEW-AKS % k get cert
+NAME              READY   SECRET            AGE
+apic-ingress-ca   True    apic-ingress-ca   24s
+
+dallibagdi@Dallis-MacBook-Pro NEW-AKS % k get issuer
+NAME                  READY   AGE
+apic-ingress-issuer   True    2m48s
+----
+
+. Apply the rest of the gateway certificates. Make sure they are signed by the current Issuer (by default a self-signed issuer will be used)
++
+[,shell]
+----
+kubectl apply -f k8s/gateway-certs.yaml
+----
+
+. Create admin password for the DataPower instance
++
+[,shell]
+----
+kubectl -n datapower create secret generic datapower-admin-credentials --from-literal=password=admin
+
+----
+
+. Create entitlement secret in datapower namespace
++
+Get entitlement key from https://myibm.ibm.com/products-services/containerlibrary
++
+----
+kubectl -n datapower create secret docker-registry apic-registry-secret --docker-server=cp.icr.io --docker-username=cp --docker-password=$ENTITLEMENT
+----
+
+=== Install the operators
+
+. Install the API Connect operator in the apic-operators namespace
++
+[,shell]
+----
+kubectl apply -f k8s/ibm-apiconnect-crds.yaml -n apic-operators
+----
+
+. Install APIC operator pod
++
+[,shell]
+----
+kubectl apply -f k8s/ibm-apiconnect-distributed.yaml -n apic-operators
+----
+
+
+. Install DataPower operator in the datapower namespace
++
+[,shell]
+----
+kubectl apply -f k8s/ibm-datapower.yaml
+----
+
+=== Install the instance and link to API Connect
+
+. Create the DataPower instance
++
+[,shell]
+----
+kubectl apply -f k8s/apigateway_cr.yaml
+----
+
+
+

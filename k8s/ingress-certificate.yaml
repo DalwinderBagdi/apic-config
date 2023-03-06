@@ -1,0 +1,17 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+    name: apic-ingress-ca
+spec:
+    commonName: apic-ingress-ca
+    duration: 87600h0m0s
+    isCA: true
+    issuerRef:
+        kind: Issuer
+        name: apic-ingress-issuer
+    renewBefore: 720h0m0s
+    secretName: apic-ingress-ca
+    usages:
+        - digital signature
+        - cert sign
+        - key encipherment
