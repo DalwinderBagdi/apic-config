@@ -197,3 +197,409 @@ Management endpoint: https://gatewaymanager.dallibagdi.net
 API invocation endpoint:
 +
 https://dpgateway.dallibagdi.net
+
+=== Connecting the DataPower instance using APIs
+
+The platform REST APIs for IBM API Connect v10 provide complete access to the capability of the platform
+https://apic-api.apiconnect.ibmcloud.com/v10/10.0.1.8.html#/documentation/introduction
+
+. Create an admin user that can login to the cloud manager. We will be using this user later
+
+.. Login to the cloud Manager
+
+.. Click 'members'
+
+.. Add member
+
+. Download the CLI + credentials.json from the Cloud Manager
++
+image::images/download-toolkit.png[]
++
+image::images/install-dialog.png[]
+
+. Register the Toolkit credentials:
++
+[,shell]
+----
+apic client-creds:set credentials.json
+----
+
+. Login using the admin user that was previously created.
++
+[,shell]
+----
+# Set environment variables
+server=$(oc get routes --selector=app.kubernetes.io/name=cloud-admin-endpoint  -o custom-columns=ROUTE:.spec.host --no-headers)
+
+API_MANAGER_USER=admin
+API_MANAGER_PASS=admin1234
+
+# Login
+./apic login --username $API_MANAGER_USER --password $API_MANAGER_PASS --server $server --realm admin/default-idp-1
+----
+
+. Obtain a client id:
+
+.. Create the following json (example) and save as apic-dalli-test.json. This provides the parameters for registering an app named apic-pipeline using the toolkit client type and a pre-defined client ID and secret :
++
+[source,json]
+----
+{
+"name": "apic-dalli-test",
+"client_id": "apic-dalli-test-client-id",
+"client_secret": "apic-dalli-test-client-secret",
+"client_type": "toolkit"
+}
+----
+
+.. Register the above apic-dalli-test app
++
+[,shell]
+----
+apic registrations:create --server $server apic-dalli-test.json
+----
++
+We can now use this client id + secret for calling the API Connect APIs.
+
+. Get a bearer token
++
+[,shell]
+----
+PLATFORM_API_EP=$(oc get route ${RELEASE}-mgmt-platform-api -o jsonpath="{.spec.host}")
+
+APIC_NEW_CLIENT_ID=apic-dalli-test-client-id
+APIC_NEW_CLIENT_SECRET=apic-dalli-test-client-secret
+
+OUTPUT=$(curl -kLsS -X POST https://$PLATFORM_API_EP/api/token \
+-H "accept: application/json" \
+-H "content-type: application/json" \
+-d "{
+\"username\": \"${API_MANAGER_USER}\",
+\"password\": \"${API_MANAGER_PASS}\",
+\"realm\": \"admin/default-idp-1\",
+\"client_id\": \"${APIC_NEW_CLIENT_ID}\",
+\"client_secret\": \"${APIC_NEW_CLIENT_SECRET}\",
+\"grant_type\": \"password\"
+}")
+
+BEARER_TOKEN=$(echo "${OUTPUT}" | jq -r ".access_token")
+
+echo "[DEBUG] Bearer token: ${BEARER_TOKEN}"
+----
+
+. Get the cloud manager org id
++
+[,shell]
+----
+curl -kLsS https://"$PLATFORM_API_EP"/api/orgs \
+    -H "Accept: application/json" \
+    -H "Authorization: Bearer $BEARER_TOKEN"
+----
++
+You should get an example similar to:
++
+
+[source,json]
+----
+{
+    "total_results": 1,
+    "results": [
+        {
+            "type": "org",
+            "org_type": "admin",
+            "api_version": "2.0.0",
+            "id": "05413ca7-03b3-45ae-9081-9b18d8aa6fdf",
+            "name": "admin",
+            "title": "Cloud Admin",
+            "summary": "Cloud Admin organization",
+            "state": "enabled",
+            "owner_url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/user-registries/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/e279cad0-e730-43b9-88bb-deebcf2e3b64/users/300db8c9-a05b-409e-be63-8a519d1066b5",
+            "created_at": "2023-02-02T10:17:25.000Z",
+            "updated_at": "2023-02-02T10:17:25.000Z",
+            "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf"
+        }
+    ]
+}
+----
+
+. Get the available TLS profiles
++
+[,shell]
+----
+curl -kLsS https://"$PLATFORM_API_EP"/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/tls-server-profiles \
+    -H "Accept: application/json" \
+    -H "Authorization: Bearer $BEARER_TOKEN"
+----
++
+You should get an example similar to:
++
+
+[source,json]
+----
+{
+    "total_results": 1,
+    "results": [
+        {
+            "type": "tls_server_profile",
+            "api_version": "2.0.0",
+            "id": "729c2ddb-5e6e-4d1b-99ab-7fd9476e6f7d",
+            "name": "tls-server-profile-default",
+            "version": "1.0.0",
+            "title": "Default TLS server profile",
+            "summary": "Default TLS server profile for gateway services for API execution",
+            "protocols": [
+                "tls_v1.2",
+                "tls_v1.3"
+            ],
+            "ciphers": [
+                "TLS_AES_256_GCM_SHA384",
+                "RSA_WITH_AES_128_CBC_SHA"
+            ],
+            "elliptic_curve": [
+                "secp521r1",
+                "secp384r1",
+                "secp256k1"
+            ],
+            "mutual_authentication": "none",
+            "limit_renegotiation": true,
+            "keystore_url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/keystores/5216c697-0758-4ca5-b257-551e147ef8fd",
+            "created_at": "2023-02-02T10:17:27.000Z",
+            "updated_at": "2023-02-02T10:17:27.000Z",
+            "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/tls-server-profiles/729c2ddb-5e6e-4d1b-99ab-7fd9476e6f7d"
+        }
+    ]
+}
+----
+
+. Get the integration profile for DataPower API Gateway
++
+[,shell]
+----
+curl -kLsS https://"$PLATFORM_API_EP"/api/cloud/integrations \
+    -H "Accept: application/json" \
+    -H "Authorization: Bearer $BEARER_TOKEN"
+----
++
+You should get an example similar to:
++
+
+[source,json]
+----
+{
+    "total_results": 11,
+    "results": [
+        {
+            "type": "integration",
+            "integration_type": "billing",
+            "api_version": "2.0.0",
+            "id": "f12b6dbb-5e47-4198-9985-10071f047fad",
+            "name": "killbill",
+            "title": "KillBill Billing Provider",
+            "summary": "Configure subscription billing using KillBill as a billing provider",
+            "state": "disabled",
+            "remote": false,
+            "created_at": "2023-02-02T10:17:25.000Z",
+            "updated_at": "2023-03-06T16:55:19.000Z",
+            "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/billing/f12b6dbb-5e47-4198-9985-10071f047fad"
+        },
+        {
+            "type": "integration",
+            "integration_type": "billing",
+            "api_version": "2.0.0",
+            "id": "d29fcb5d-9494-4469-ba30-8206b697cdd7",
+            "name": "stripe",
+            "title": "Stripe Billing Provider",
+            "summary": "Configure subscription billing using Stripe as a billing provider",
+            "state": "enabled",
+            "remote": false,
+            "created_at": "2023-02-02T10:17:25.000Z",
+            "updated_at": "2023-03-06T16:55:19.000Z",
+            "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/billing/d29fcb5d-9494-4469-ba30-8206b697cdd7"
+        },
+        {
+            "type": "integration",
+            "integration_type": "user_registry",
+            "api_version": "2.0.0",
+            "id": "41ad3b06-0001-456f-a4c0-cb34b8ed5d2e",
+            "name": "oidc",
+            "title": "OIDC User Registry",
+            "summary": "Integration document for integrating with OIDC",
+            "state": "enabled",
+            "remote": false,
+            "created_at": "2023-02-02T10:17:25.000Z",
+            "updated_at": "2023-02-02T10:17:25.000Z",
+            "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/user-registry/41ad3b06-0001-456f-a4c0-cb34b8ed5d2e"
+        },
+        {
+            "type": "integration",
+            "integration_type": "payment_method",
+            "api_version": "2.0.0",
+            "id": "cea0e54a-948d-4166-9788-aba2bc30ae8d",
+            "name": "creditcard",
+            "title": "Credit Card",
+            "summary": "Credit Card",
+            "state": "enabled",
+            "remote": true,
+            "created_at": "2023-02-02T10:17:25.000Z",
+            "updated_at": "2023-02-02T10:17:25.000Z",
+            "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/payment-method/cea0e54a-948d-4166-9788-aba2bc30ae8d"
+        },
+        {
+            "type": "integration",
+            "integration_type": "user_registry",
+            "api_version": "2.0.0",
+            "id": "51f7940e-16cb-4f62-a162-181659b88012",
+            "name": "ldap",
+            "title": "LDAP User Registry",
+            "summary": "Integration document for integrating with LDAP based user registries",
+            "state": "enabled",
+            "remote": true,
+            "created_at": "2023-02-02T10:17:25.000Z",
+            "updated_at": "2023-02-02T10:17:25.000Z",
+            "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/user-registry/51f7940e-16cb-4f62-a162-181659b88012"
+        },
+        {
+            "type": "integration",
+            "integration_type": "user_registry",
+            "api_version": "2.0.0",
+            "id": "275fc8fb-edee-4e89-af56-2c4f4a9d3276",
+            "name": "lur",
+            "title": "Local User Registry",
+            "summary": "Integration document for integrating with API Connect Local User Registries (LURs)",
+            "state": "enabled",
+            "remote": true,
+            "created_at": "2023-02-02T10:17:25.000Z",
+            "updated_at": "2023-02-02T10:17:25.000Z",
+            "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/user-registry/275fc8fb-edee-4e89-af56-2c4f4a9d3276"
+        },
+        {
+            "type": "integration",
+            "integration_type": "user_registry",
+            "api_version": "2.0.0",
+            "id": "cdc64f9c-0693-4857-a02b-d302faf80565",
+            "name": "authurl",
+            "title": "Authentication URL User Registry",
+            "summary": "Integration document for integrating with user registries via Authentication URL",
+            "state": "enabled",
+            "remote": false,
+            "created_at": "2023-02-02T10:17:23.000Z",
+            "updated_at": "2023-02-02T10:17:23.000Z",
+            "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/user-registry/cdc64f9c-0693-4857-a02b-d302faf80565"
+        },
+        {
+            "type": "integration",
+            "integration_type": "user_registry",
+            "api_version": "2.0.0",
+            "id": "73746f8f-543b-45ed-9ebc-45c59562bf14",
+            "name": "iam",
+            "title": "IAM User Registry",
+            "summary": "Configure user authentication using an IAM user registry",
+            "state": "enabled",
+            "remote": false,
+            "created_at": "2023-02-02T10:17:23.000Z",
+            "updated_at": "2023-02-02T10:17:23.000Z",
+            "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/user-registry/73746f8f-543b-45ed-9ebc-45c59562bf14"
+        },
+        {
+            "type": "integration",
+            "integration_type": "gateway_service",
+            "api_version": "2.0.0",
+            "id": "61279a97-e0c5-4c2a-8346-fdf827ba9d41",
+            "name": "datapower-gateway",
+            "title": "DataPower Gateway (v5 Compatible)",
+            "summary": "Configure gateway service using DataPower Gateway (v5 Compatible)",
+            "state": "enabled",
+            "remote": false,
+            "created_at": "2023-02-02T10:17:23.000Z",
+            "updated_at": "2023-02-02T10:17:23.000Z",
+            "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/gateway-service/61279a97-e0c5-4c2a-8346-fdf827ba9d41"
+        },
+        {
+            "type": "integration",
+            "integration_type": "gateway_service",
+            "api_version": "2.0.0",
+            "id": "2b8c2616-6d55-4a17-ba55-49500cb730d1",
+            "name": "event-gateway",
+            "title": "Events Gateway",
+            "summary": "Configure gateway service using Events Gateway",
+            "state": "enabled",
+            "remote": false,
+            "created_at": "2023-02-02T10:17:23.000Z",
+            "updated_at": "2023-02-02T10:17:23.000Z",
+            "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/gateway-service/2b8c2616-6d55-4a17-ba55-49500cb730d1"
+        },
+        {
+            "type": "integration",
+            "integration_type": "gateway_service",
+            "api_version": "2.0.0",
+            "id": "c83b02b2-fb39-4004-8a93-6555e9b69023",
+            "name": "datapower-api-gateway",
+            "title": "DataPower API Gateway",
+            "summary": "Configure gateway service using DataPower API Gateway",
+            "state": "enabled",
+            "remote": false,
+            "created_at": "2023-02-02T10:17:23.000Z",
+            "updated_at": "2023-02-02T10:17:23.000Z",
+            "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/gateway-service/c83b02b2-fb39-4004-8a93-6555e9b69023"
+        }
+    ]
+}
+----
+
+. Use the org, tls and integration id to register the gateway service. In the below example we are using org ID 05413ca7-03b3-45ae-9081-9b18d8aa6fdf and TLS profile 729c2ddb-5e6e-4d1b-99ab-7fd9476e6f7d and integration profile c83b02b2-fb39-4004-8a93-6555e9b69023
++
+
+[,shell]
+----
+curl -kLsS -X POST https://$PLATFORM_API_EP/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/availability-zones/availability-zone-default/gateway-services \
+--header 'Accept: application/json' \
+--header 'Authorization: bearer $BEARER_TOKEN"' \
+--header 'Content-Type: application/json' \
+--data '{"name":"aks-dp-2","title":"aks-dp-2","endpoint":"https://gatewaymanager.dallibagdi.net","api_endpoint_base":"https://dpgateway.dallibagdi.net","tls_client_profile_url":"https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/tls-client-profiles/836b1230-449f-4894-b1c7-d3c725bdc247","gateway_service_type":"datapower-api-gateway","visibility":{"type":"public"},"sni":[{"host":"*","tls_server_profile_url":"https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/tls-server-profiles/729c2ddb-5e6e-4d1b-99ab-7fd9476e6f7d"}],"integration_url":"https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/gateway-service/c83b02b2-fb39-4004-8a93-6555e9b69023"}'
+
+curl -kLsS -X POST "https://$PLATFORM_API_EP/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/availability-zones/availability-zone-default/gateway-services" \
+--header "Accept: application/json" \
+--header "Authorization: bearer $BEARER_TOKEN" \
+--header "Content-Type: application/json" \
+--data '
+{"name":"aks-dp-2","title":"aks-dp-2","endpoint":"https://gatewaymanager.dallibagdi.net","api_endpoint_base":"https://dpgateway.dallibagdi.net","tls_client_profile_url":"https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/tls-client-profiles/836b1230-449f-4894-b1c7-d3c725bdc247","gateway_service_type":"datapower-api-gateway","visibility":{"type":"public"},"sni":[{"host":"*","tls_server_profile_url":"https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/tls-server-profiles/729c2ddb-5e6e-4d1b-99ab-7fd9476e6f7d"}],"integration_url":"https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/gateway-service/c83b02b2-fb39-4004-8a93-6555e9b69023"}'
+
+----
++
+
+[source,json]
+----
+{
+    "type": "gateway_service",
+    "gateway_service_type": "datapower-api-gateway",
+    "api_version": "2.0.0",
+    "id": "39d29d84-0f49-4842-aa1f-28579c666394",
+    "name": "aks-dp-2",
+    "title": "aks-dp-2",
+    "endpoint": "https://gatewaymanager.dallibagdi.net",
+    "api_endpoint_base": "https://dpgateway.dallibagdi.net",
+    "tls_client_profile_url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/tls-client-profiles/836b1230-449f-4894-b1c7-d3c725bdc247",
+    "visibility": {
+        "type": "public"
+    },
+    "sni": [
+        {
+            "host": "*",
+            "tls_server_profile_url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/tls-server-profiles/729c2ddb-5e6e-4d1b-99ab-7fd9476e6f7d"
+        }
+    ],
+    "integration_url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/cloud/integrations/gateway-service/c83b02b2-fb39-4004-8a93-6555e9b69023",
+    "availability_zone_url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/availability-zones/c8365445-9dd4-4ad5-a577-6f7e9e4019a9",
+    "owned": true,
+    "configuration": {
+        "domain_name": "apiconnect",
+        "gateway_version": "6.0.0.0",
+        "managed_by": "apim"
+    },
+    "oauth_shared_secret": "********",
+    "created_at": "2023-03-08T11:42:53.156Z",
+    "updated_at": "2023-03-08T11:42:53.156Z",
+    "org_url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf",
+    "url": "https://apic-mgmt-platform-api-apic.apps.itzocp-5500054bqe-6wvf.az.techzone.ibm.com/api/orgs/05413ca7-03b3-45ae-9081-9b18d8aa6fdf/availability-zones/c8365445-9dd4-4ad5-a577-6f7e9e4019a9/gateway-services/39d29d84-0f49-4842-aa1f-28579c666394"
+}
+----
