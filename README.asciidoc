@@ -182,5 +182,18 @@ kubectl apply -f k8s/ibm-datapower.yaml
 kubectl apply -f k8s/apigateway_cr.yaml
 ----
 
+==== Connecting the DataPower instance using UI
 
+. Open API Connect Cloud Manager (deployed on your OCP cluster). The password should be stored in the secret apic-mgmt-admin-pass
 
+. Click on Topology
++
+image::images/topology.png[]
+
+. Register DataPower API gateway service
++
+Management endpoint: https://gatewaymanager.dallibagdi.net
++
+API invocation endpoint:
++
+https://dpgateway.dallibagdi.net
